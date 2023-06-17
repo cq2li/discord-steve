@@ -4,24 +4,25 @@ from pathlib import Path
 from datetime import datetime
 import sqlite3
 from configparser import ConfigParser
+import asyncio
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG = ConfigParser()
 CONFIG.read(BASE_DIR / 'config.ini')
-DB = "Chapter_Releases.db"
+DB = 'Chapter_Releases.db'
 p = Path('./output')
 
 HEADERS = { 'Accept-Language': 'en',
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)'}
 ## ensure no spaces in NAME
-NAME = "survival-story-of-a-sword-king-in-a-fantasy-world"
+NAME = 'survival-story-of-a-sword-king-in-a-fantasy-world'
 URL = 'https://en.leviatanscans.com/manga/survival-story-of-a-sword-king-in-a-fantasy-world/'
 API = 'ajax/chapters'
 
 turl_API = 'https://api.tinyurl.com/create'
-turl_PAYLOAD = { "domain":"tinyurl.com" }
+turl_PAYLOAD = { 'domain':'tinyurl.com' }
 turl_HEADERS = HEADERS.copy()
-turl_HEADERS['Authorization'] = f'Bearer {CONFIG.get("tinyurl", "sekrit")}'
+turl_HEADERS['Authorization'] = f'Bearer {CONFIG.get("tinyurl", "secret")}'
 
 def connect(db):
     con = sqlite3.connect(db)
@@ -38,12 +39,12 @@ def swordking_refresh():
     ul = list(filter(lambda x: x != '\n', ul.children))
     
     result = []
-    display_name = NAME.replace("-", " ").title()
+    display_name = NAME.replace('-', ' ').title()
 
     # clean release info
     for listing in ul:
         chapter = listing.a.string.strip()
-        link    = listing.a["href"]
+        link    = listing.a['href']
         release = listing.i.string.strip()
         try:
             release = datetime.strptime(release, '%B %d, %Y')
@@ -52,10 +53,11 @@ def swordking_refresh():
         result.append((release, chapter, display_name, link))
 
     # store in database
-    cur.execute(f'CREATE TABLE IF NOT EXISTS swordking(release, chapter, name, link, UNIQUE(chapter) ON CONFLICT REPLACE);')
-    cur.executemany("INSERT INTO swordking VALUES(?, ?, ?, ?)", result)
-    con.commit()
-    con.close()
+    with con:
+        cur = con.cursor()
+        cur.execute(f'CREATE TABLE IF NOT EXISTS swordking(release, chapter, name, link, UNIQUE(chapter) ON CONFLICT REPLACE);')
+        cur.executemany('INSERT INTO swordking VALUES(?, ?, ?, ?)', result)
+        con.commit()
 
 def notify(row):
     '''
@@ -65,18 +67,18 @@ def notify(row):
     release, chapter, manga_name, link = row
     release = datetime.fromisoformat(release)
     ## set the url to be shortened
-    turl_PAYLOAD["url"] = link
+    turl_PAYLOAD['url'] = link
     turl = requests.post(turl_API, headers = turl_HEADERS, json = turl_PAYLOAD)
     tinyurl = turl.json()['data']
 
     manga = f'{chapter} is the latest chapter of { manga_name.replace("-", " ").title() }, '
 
     ago = (datetime.now() - release).days
-    ago_str = "today" if ago == 0 else str(ago) + " days ago"
+    ago_str = 'today' if ago == 0 else str(ago) + ' days ago'
     released = f'released { ago_str }.\n' 
 
     link = f'Read it at: { tinyurl["tiny_url"] } '
-    tinyurl_time = datetime.strftime(datetime.fromisoformat(tinyurl["created_at"]), "%b %d, %Y")
+    tinyurl_time = datetime.strftime(datetime.fromisoformat(tinyurl['created_at']), '%b %d, %Y')
 
     created = f'(link created on { tinyurl_time }).'
 

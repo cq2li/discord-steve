@@ -3,3 +3,5 @@ config.ini
 *.txt
 .venv
 *.pycache
+!requirements.txt
+__pycache__/
