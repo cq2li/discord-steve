@@ -5,3 +5,4 @@ config.ini
 *.pycache
 !requirements.txt
 __pycache__/
+*.log
