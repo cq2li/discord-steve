@@ -70,7 +70,7 @@ async def on_message(message):
     if message.content == '/last_checked':
         await message.channel.send("Last checked at " + lib.last_scrape())
 
-    if message.content == '/purge' and client.get_user(CHANNEL_OWNER):
+    if message.content == '/purge' and client.get_user(int(CHANNEL_OWNER)):
         await message.channel.purge(check = lambda x : True)
 
 client.run(BOT_KEY)
