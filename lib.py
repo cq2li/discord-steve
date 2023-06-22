@@ -220,11 +220,10 @@ def checking_loop(client: discord.Client, event_loop):
         logging.info("Days elapsed since last refresh: " +  str(elapsed.days))
         if elapsed.days > 6:
             # check once every 5 minutes
-            time.sleep(60 * 3 + random.uniform(1 * 60, 4 * 60))
+            time.sleep(60 * 8.5 + random.uniform(1 * 60, 3 * 60))
         else:
             #check once every 4 hours
-            # time.sleep(60 * 60 * 4)
-            time.sleep(60 * 60 * 4 + random.uniform(60 * 60 * 1, 60 * 60 * 2))
+            time.sleep(60 * 60 * 6 + random.uniform(60 * 60 * 1, 60 * 60 * 2))
         
 
 def last_scrape():
