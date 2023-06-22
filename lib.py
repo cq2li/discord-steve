@@ -110,7 +110,7 @@ def refresh():
         con.commit()
     global LAST_SCRAPE
     LAST_SCRAPE = datetime.now()
-    return f'Successful scrap of SwordKing'
+    return f'Successful scrape of SwordKing from Leviatan'
 
 def notify(row):
     '''

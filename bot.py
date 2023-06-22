@@ -11,6 +11,7 @@ BASE = Path(__file__).resolve().parent
 CONFIG = ConfigParser()
 CONFIG.read(BASE / 'config.ini')
 BOT_KEY = CONFIG.get('discord', 'bot_secret')
+CHANNEL_OWNER = CONFIG.get('discord', 'channel_owner')
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -43,7 +44,6 @@ async def on_ready():
     check_loop.start()
             
     
-
 @client.event
 async def on_message(message):
     if message.author == client.user:
@@ -70,7 +70,7 @@ async def on_message(message):
     if message.content == '/last_checked':
         await message.channel.send("Last checked at " + lib.last_scrape())
 
-    if message.content == '/purge' and client.get_user(1117855078032879717):
+    if message.content == '/purge' and client.get_user(CHANNEL_OWNER):
         await message.channel.purge(check = lambda x : True)
 
 client.run(BOT_KEY)
