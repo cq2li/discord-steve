@@ -40,6 +40,7 @@ logging.basicConfig(
 logging.info("Logging starting")
 
 LAST_SCRAPE = None
+VERBOSE = 1
 
 def connect(db: str):
     con = sqlite3.connect(db, isolation_level= 'DEFERRED')
@@ -206,10 +207,11 @@ async def send_msg(channel, msg):
     await channel.send(msg)
 
 def checking_loop(client: discord.Client, event_loop):
+    global VERBOSE
+    channel = client.get_channel(int(CONFIG.get('discord', 'general_channel')))
     while True:
         refresh()
         if has_new_updates('swordking'):
-            channel = client.get_channel(1117858953750126744)
             update = latest('swordking')
             event_loop.create_task(channel.send('@everyone\n' + update))
 
@@ -217,13 +219,17 @@ def checking_loop(client: discord.Client, event_loop):
         now = datetime.now()
         elapsed = datetime.now() - last_update
         logging.info(f'last checked at {now}')
+
+        if VERBOSE == 1:
+            event_loop.create_task(channel.send(f"Scraped at {datetime.strftime(now, '%Y-%m-%d %I:%M:%S %p %Z')}"))
+
         logging.info("Days elapsed since last refresh: " +  str(elapsed.days))
         if elapsed.days > 6:
             # check once every 5 minutes
-            time.sleep(60 * 8.5 + random.uniform(1 * 60, 3 * 60))
+            time.sleep(60 * 8.5 + random.uniform(1 * 60, 15 * 60))
         else:
             #check once every 4 hours
-            time.sleep(60 * 60 * 6 + random.uniform(60 * 60 * 1, 60 * 60 * 2))
+            time.sleep(60 * 60 * 6 + random.uniform(60 * 60 * 1, 60 * 60 * 6))
         
 
 def last_scrape():
