@@ -1,23 +1,24 @@
 import discord, lib, asyncio, logging, threading, const_texts, datetime as dt
 from configparser import ConfigParser
 from pathlib import Path
+from discord import app_commands
 
 BASE = Path(__file__).resolve().parent
 CONFIG = ConfigParser()
 CONFIG.read(BASE / 'config.ini')
 BOT_KEY = CONFIG.get('discord', 'bot_secret')
 CHANNEL_OWNER = CONFIG.get('discord', 'channel_owner')
-SCRAPING_LOOP = None
 
 intents = discord.Intents.default()
 intents.message_content = True
-
 client = discord.Client(intents=intents)
+tree = app_commands.CommandTree(client)
 THREADS = {}
 
-def daemon_wrap(target):
+
+def daemon_restart(target):
     '''
-    A decorator function that restarts the daemon threads upon crash
+    A decorator function that restarts the daemon threads upon crash with a limit amount
     '''
     def wrapper(*args):
         counter = 5
@@ -37,8 +38,20 @@ def daemon_wrap(target):
                 # stop the thread if it crashed more than 5 times in the last 24 hours
                 if counter == 0:
                     logging.info(f'{thread_name} closing thread')
+                    send_message(f'{thread_name} exiting, too many restarts', *args)
                     break
     return wrapper
+
+
+def send_message(msg, client, event_loop):
+    '''
+    Enable discord message sending
+    '''
+    channel = client.get_channel(int(CONFIG.get('discord', 'general_channel')))
+    event_loop.create_task(channel.send(msg))
+
+
+
 
 @client.event
 async def on_ready():
@@ -57,17 +70,17 @@ async def on_ready():
     for gd in client.guilds:
         for ch in gd.text_channels:
             await ch.send(client.appinfo.description)
-            await ch.send(const_texts.help_text)
     
     # initialise thread dictionary
-    THREADS["leviatanDaemon"] = threading.Thread(
-            target = daemon_wrap(lib.daemon_refresh),                          
+    THREADS["leviatan_daemon"] = threading.Thread(
+            target = daemon_restart(lib.daemon_refresh),                          
             args=[client, asyncio.get_running_loop()], 
             daemon=True, 
-            name="leviathanDaemon")
-    THREADS["leviatanDaemon"].start()
-            
-    
+            name="leviathan_daemon")
+    THREADS["leviatan_daemon"].start()
+    await tree.sync(guild=discord.Object(id=int(CONFIG.get('discord', 'server_id'))))
+
+
 @client.event
 async def on_message(message):
 
@@ -76,42 +89,104 @@ async def on_message(message):
     
     if message.content == '/dm me':
         dm = await client.create_dm(message.author)
-        await dm.send('suh duh')
         await dm.send('good times')
-
-    if message.content == '/latest':
-        newest_update = lib.latest("swordking")
-        await message.channel.send(newest_update)
-
-    if message.content == '/refresh':
-       await message.channel.send(lib.refresh())
 
     if message.content == '/shutdown':
         await client.close()
 
-    if message.content == '/help':
-        await message.channel.send(help_text)
 
-    if message.content == '/last_scraped':
-        await message.channel.send("Last scraped at " + lib.last_scrape())
+def tree_guild(func):
+    '''
+    Convenience decorator for including guild id in slash commands
+    '''
+    cmd = tree.command(guild = discord.Object(id=int(CONFIG.get('discord', 'server_id'))))(func)
+    async def decorate(*args):
+        # cmd = tree.command(guild = discord.Object(id=int(CONFIG.get('discord', 'server_id'))))(func)
+        await cmd(*args)
+    return decorate
 
-    if message.content == '/purge' and client.get_user(int(CHANNEL_OWNER)):
-        await message.channel.purge(check = lambda x : True)
 
-    if message.content == '/check_threads':
-        await message.channel.send(threading.enumerate())
+@tree_guild
+async def check_threads(ctx):
+    '''
+    Checks the status of running daemons
+    '''
+    for thread in THREADS:
+        await ctx.response.send_message(f'{thread} is running')
 
-    if message.content == '/check_scraper':
-        if THREADS['leviatanDaemon']:
-            await message.channel.send("Running" if THREADS['leviatanDaemon'].is_alive() else "Crashed")
-        else:
-            await message.channel.send("Not initialised")
 
-    if message.content == '/set_verbose 0':
-        lib.VERBOSE = 0
-        await message.channel.send(f'VERBOSE set to {lib.VERBOSE}')
-    if message.content == '/set_verbose 1':
-        lib.VERBOSE = 1
-        await message.channel.send(f'VERBOSE set to {lib.VERBOSE}')
+@tree_guild
+async def toggle_verbose(ctx):
+    '''
+    Toggles message verbosity
+    '''
+    lib.VERBOSE = not lib.VERBOSE
+    await ctx.response.send_message(f'VERBOSE set to {lib.VERBOSE}')
+
+
+@tree_guild
+async def purge(ctx):
+    '''
+    Clears all channel history
+    '''
+    if ctx.user.id == int(CHANNEL_OWNER):
+        await ctx.response.defer(ephemeral = True)
+        await ctx.channel.purge(check = lambda x : True)
+        await ctx.followup.send("History Cleared")
+
+
+@tree_guild
+async def check_last_update_time(ctx):
+    '''
+    Displays last updated time
+    '''
+    await ctx.response.send_message("Last updated at " + lib.last_scrape())
+
+
+@tree_guild
+async def help_me(ctx):
+    '''
+    Sends useless info
+    '''
+    await ctx.response.send_message(const_texts.help_text)
+
+
+@tree_guild
+async def latest_chapters(ctx):
+    '''
+    Sends newest chapters
+    '''
+    newest_update = lib.latest("swordking")
+    await ctx.response.send_message(newest_update)
+
+ 
+@tree_guild
+async def update_database(ctx):
+    '''
+    Refreshes database manually
+    '''
+    await ctx.response.send_message(lib.refresh())
+
+
+@tree_guild
+async def restart(ctx):
+    '''
+    Forces a bot restart
+    '''
+    if ctx.user.id == (int(CHANNEL_OWNER)):
+        await ctx.response.send_message('restarting')
+        await client.close()
+
+
+@tree_guild
+async def goodtimes(ctx):
+    '''
+    FOR GOOD TIMES
+    '''
+    dm = await client.create_dm(ctx.user)
+    await ctx.response.send_message('😎')
+    await dm.send('good times')
+    
+
 
 client.run(BOT_KEY)

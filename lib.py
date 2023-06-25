@@ -1,83 +1,106 @@
-import requests
-from bs4 import BeautifulSoup
+import re, logging, time, discord, random, sqlite3, datetime as dt, requests
 from pathlib import Path
-import datetime as dt
 from datetime import datetime
-import sqlite3
 from configparser import ConfigParser
-import re
-import logging
-import time
-import discord
-import random
+from bs4 import BeautifulSoup
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG = ConfigParser()
 CONFIG.read(BASE_DIR / 'config.ini')
 DB = 'Chapter_Releases.db'
-p = Path('./output')
 
-HEADERS = { 'Accept-Language': 'en',
-'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)'}
+HEADERS = { 
+           'Accept-Language': 'en',
+           'User-Agent': ('Mozilla/5.0 (X11; Linux x86_64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/114.0.0.0 Safari/537.36')}
+
+FREQ_INTERVAL = 8.5
+INFREQ_INTERVAL = 240
+
 ## ensure no spaces in NAME
 NAME = 'survival-story-of-a-sword-king-in-a-fantasy-world'
 URL = 'https://en.leviatanscans.com/manga/survival-story-of-a-sword-king-in-a-fantasy-world/'
-# URL = 'https://en.leviatanscans.com/manga/the-max-leveled-hero-will-return/'
 API = 'ajax/chapters'
 
-turl_API = 'https://api.tinyurl.com/create'
-turl_PAYLOAD = { 'domain':'tinyurl.com' }
-turl_HEADERS = HEADERS.copy()
-turl_HEADERS['Authorization'] = f'Bearer {CONFIG.get("tinyurl", "secret")}'
+TINY_API = 'https://api.tinyurl.com/create'
+TINY_PAYLOAD = { 'domain':'tinyurl.com' }
+TINY_HEADERS = HEADERS.copy()
+TINY_HEADERS['Authorization'] = f'Bearer {CONFIG.get("tinyurl", "secret")}'
 
+### Settings for logging
 logging.basicConfig(
-        filename = 'lib.log', 
+        filename= 'lib.log', 
         encoding = 'utf-8', 
         level = logging.INFO,
-        format = '%(asctime)s %(message)s',
+        format = '%(levelname)s - %(asctime)s %(message)s',
         datefmt = '%m/%d/%Y %I:%M:%S %p',
         )
 logging.info("Logging starting")
 
+# The last scraped time
 LAST_SCRAPE = None
-VERBOSE = 1
+# Verbosity of updates
+VERBOSE = False
+
 
 def connect(db: str):
+    '''
+    Establish and return a connection object from the database
+    '''
     con = sqlite3.connect(db, isolation_level= 'DEFERRED')
     return con
 
+
 def refresh():
     '''
-    Scrapes Leviatan scans for lastest chapters and updates the sqlite database
+    Scrapes Leviatan scans for lastest chapters and updates the database
     '''
-    con = connect(DB)
-    response = requests.post(url = URL + API, headers = HEADERS)
+    # set the time out to 10 seconds so that we don't wait forever
+    response = requests.post(url = URL + API, headers = HEADERS, timeout = (4, 4))
+    if response.status_code != 200:
+        raise Exception("Unsuccessful Request")
+
     parsed = BeautifulSoup(response.text, 'html.parser')
     ul = parsed.find('ul', class_='main')
     ul = list(filter(lambda x: x != '\n', ul.children))
-    
+    result = format_leviatan_dates(ul)
+
+    # store in database, lock
+    con = connect(DB)
+    with con:
+        cur = con.cursor()
+        cur.execute(f'CREATE TABLE IF NOT EXISTS swordking(release, chapter INTEGER, name, link, UNIQUE(chapter) ON CONFLICT REPLACE);')
+        cur.executemany('INSERT INTO swordking VALUES(?, ?, ?, ?)', result)
+        con.commit()
+    global LAST_SCRAPE
+    LAST_SCRAPE = datetime.now()
+    return f'Successful scrape of SwordKing from Leviatan'
+
+
+def format_leviatan_dates(ul: list[str]):
+    '''
+    Formats leviatan web scrapes for database
+    '''
     result = []
     display_name = NAME.replace('-', ' ').title()
-    
+     
     re_chapter = re.compile('Chapter (\d+)')
     re_date = re.compile('(\d+) (day|hour|min|s)?')
 
     # clean release info
     for listing in ul:
+        # chapter number is in regex capture group 0
         chapter = listing.a.string.strip()
-        try:
-            chapter_number = re_chapter.match(chapter).groups()[0]
-        except Exception as e:
-            logging.warning(f'Could not convert {chapter} to chapter number {e}')
-            continue
-
+        chapter_number = re_chapter.match(chapter).groups()[0]
         link    = listing.a['href']
-
         release = listing.i.string.strip()
-
+        
         try:
+            # for listings in month day, year format
             release = datetime.strptime(release, '%B %d, %Y')
-        except Exception as e:
+        except ValueError as e:
+            # for listings more within 24 hours
             logging.warning(e)
             re_matched = re_date.match(release)
 
@@ -102,16 +125,8 @@ def refresh():
                 release = datetime.now() + offset
                 
         result.append((release, chapter_number, display_name, link))
+    return result
 
-    # store in database, lock
-    with con:
-        cur = con.cursor()
-        cur.execute(f'CREATE TABLE IF NOT EXISTS swordking(release, chapter INTEGER, name, link, UNIQUE(chapter) ON CONFLICT REPLACE);')
-        cur.executemany('INSERT INTO swordking VALUES(?, ?, ?, ?)', result)
-        con.commit()
-    global LAST_SCRAPE
-    LAST_SCRAPE = datetime.now()
-    return f'Successful scrape of SwordKing from Leviatan'
 
 def notify(row):
     '''
@@ -121,8 +136,8 @@ def notify(row):
     release, chapter, manga_name, link = row
     release = datetime.fromisoformat(release)
     ## set the url to be shortened
-    turl_PAYLOAD['url'] = link
-    turl = requests.post(turl_API, headers = turl_HEADERS, json = turl_PAYLOAD)
+    TINY_PAYLOAD['url'] = link
+    turl = requests.post(TINY_API, headers = TINY_HEADERS, json = TINY_PAYLOAD)
     tinyurl = turl.json()['data']
 
     manga = f'Chapter {chapter} is the latest chapter of { manga_name.replace("-", " ").title() }, '
@@ -206,14 +221,14 @@ def _latest(tablename: str):
 async def send_msg(channel, msg):
     await channel.send(msg)
 
-def checking_loop(client: discord.Client, event_loop):
-    global VERBOSE
+def daemon_refresh(client: discord.Client, event_loop):
     channel = client.get_channel(int(CONFIG.get('discord', 'general_channel')))
     while True:
         refresh()
         if has_new_updates('swordking'):
             update = latest('swordking')
-            event_loop.create_task(channel.send('@everyone\n' + update))
+            # event_loop.create_task(channel.send('@everyone\n' + update))
+            event_loop.create_task(channel.send(update))
 
         last_update = datetime.strptime(_latest('swordking'), "%Y-%m-%d %H:%M:%S")
         now = datetime.now()
@@ -224,12 +239,12 @@ def checking_loop(client: discord.Client, event_loop):
             event_loop.create_task(channel.send(f"Scraped at {datetime.strftime(now, '%Y-%m-%d %I:%M:%S %p %Z')}"))
 
         logging.info("Days elapsed since last refresh: " +  str(elapsed.days))
-        if elapsed.days > 6:
-            # check once every 5 minutes
-            time.sleep(60 * 8.5 + random.uniform(1 * 60, 15 * 60))
+        if elapsed.days > 6 and elapsed.days < 8:
+            # check once every 15 minutes
+            time.sleep(60 * FREQ_INTERVAL + random.uniform(1 * 60, 15 * 60))
         else:
             #check once every 4 hours
-            time.sleep(60 * 60 * 6 + random.uniform(60 * 60 * 1, 60 * 60 * 6))
+            time.sleep(60 * INFREQ_INTERVAL + random.uniform(60 * 60 * 1, 60 * 60 * 2))
         
 
 def last_scrape():
